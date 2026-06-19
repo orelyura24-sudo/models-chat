@@ -1,0 +1,15 @@
+{
+  "name": "chat-adaptive-cards",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Simple chat app: React front-end + Node server, two agents (text / Adaptive Card + native charts).",
+  "scripts": {
+    "install:all": "npm install && npm install --prefix server && npm install --prefix client",
+    "dev:server": "npm run dev --prefix server",
+    "dev:client": "npm run dev --prefix client",
+    "dev": "concurrently -n server,client -c blue,green \"npm:dev:server\" \"npm:dev:client\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
