@@ -13,8 +13,8 @@ export default function MessageList({ messages, loading }) {
       )}
       {messages.map((m) => (
         <div key={m.id} className={`bubble ${m.role}`}>
-          {m.role === "assistant" && m.agent && (
-            <div className="bubble-agent">{m.agent} agent</div>
+          {m.role === "assistant" && m.meta && (
+            <div className="bubble-agent">{m.meta}</div>
           )}
           <div className="bubble-text">{m.text}</div>
         </div>

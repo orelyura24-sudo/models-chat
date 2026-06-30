@@ -4,8 +4,8 @@ import { makeTestData } from "./testData.js";
 // The custom Adaptive Card chart elements the React renderer understands.
 // This contract is shared with client/src/adaptiveCharts.js — keep them in sync.
 const CHART_SCHEMA = `
-Custom chart ELEMENTS you may place anywhere inside the card "body" (the React
-renderer draws them as native Adaptive Card elements). Use ONLY these shapes:
+Optional custom chart ELEMENTS (use ONLY when the user asks for a chart/graph/plot).
+Place them anywhere inside the card "body". Use ONLY these shapes:
 
 - { "type": "Chart.VerticalBar", "title": "string?",
     "data": [ { "x": "Q1", "y": 280000, "color": "#2563eb?" }, ... ] }
@@ -62,15 +62,16 @@ function systemPrompt(data) {
   );
 }
 
-export async function runComplexAgent(message) {
+// Adaptive-card agent. Receives the conversation history (OpenAI message format,
+// already includes the latest user turn) so follow-ups like "add a chart to that"
+// have context. Returns { summary, card }.
+export async function generateCard(history, latestText) {
   const data = makeTestData();
 
   if (!hasKey()) {
     return {
-      type: "adaptive_card",
-      prompt: message,
       summary: "Demo card (no GROQ_API_KEY set) — add a key to server/.env to generate cards with the model.",
-      card: buildFallbackCard(message, data, "No API key — showing a static demo card."),
+      card: buildFallbackCard(latestText, data, "No API key — showing a static demo card."),
     };
   }
 
@@ -78,33 +79,16 @@ export async function runComplexAgent(message) {
     const resp = await chat({
       model: MODEL,
       max_tokens: 8000,
-      // We ask for JSON in the prompt and extract it from the reply, rather than
-      // the provider's strict json_object mode — open models often fail strict
-      // mode on large nested objects ("Failed to generate JSON"). Extraction is
-      // more forgiving: it tolerates stray prose or code fences around the JSON.
-      messages: [
-        { role: "system", content: systemPrompt(data) },
-        { role: "user", content: message },
-      ],
+      messages: [{ role: "system", content: systemPrompt(data) }, ...history],
     });
-
-    const content = resp.choices[0]?.message?.content ?? "";
-    const parsed = extractJson(content);
+    const parsed = extractJson(resp.choices[0]?.message?.content ?? "");
     if (!parsed?.card) throw new Error("Model returned no 'card' field.");
-
-    return {
-      type: "adaptive_card",
-      prompt: message,
-      summary: parsed.summary || "Built an Adaptive Card from your prompt.",
-      card: parsed.card,
-    };
+    return { summary: parsed.summary || "Built an Adaptive Card from your prompt.", card: parsed.card };
   } catch (err) {
-    console.error("[complexAgent] falling back:", err?.message ?? err);
+    console.error("[cardAgent] falling back:", err?.message ?? err);
     return {
-      type: "adaptive_card",
-      prompt: message,
       summary: `Model call failed (${String(err?.message ?? err)}) — showing a static demo card.`,
-      card: buildFallbackCard(message, data, "Model unavailable — static demo card."),
+      card: buildFallbackCard(latestText, data, "Model unavailable — static demo card."),
     };
   }
 }

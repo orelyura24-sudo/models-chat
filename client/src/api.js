@@ -4,11 +4,11 @@ export async function fetchAgents() {
   return res.json();
 }
 
-export async function sendMessage(message, agent) {
+export async function sendMessage(message, agent, threadId) {
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, agent }),
+    body: JSON.stringify({ message, agent, threadId }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

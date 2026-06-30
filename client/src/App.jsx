@@ -7,13 +7,19 @@ import RenderPanel from "./components/RenderPanel.jsx";
 let idCounter = 0;
 const nextId = () => `${Date.now()}-${idCounter++}`;
 
+const newThreadId = () =>
+  typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `t-${Date.now()}`;
+
 export default function App() {
   const [agents, setAgents] = useState([]);
-  const [agent, setAgent] = useState("simple");
+  const [agent, setAgent] = useState("auto");
   const [messages, setMessages] = useState([]);
   const [artifacts, setArtifacts] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  // One conversation thread per page load — this is the key the graph's memory
+  // (MemorySaver) uses to keep history.
+  const [threadId] = useState(newThreadId);
 
   useEffect(() => {
     fetchAgents()
@@ -31,19 +37,16 @@ export default function App() {
     setLoading(true);
 
     try {
-      const reply = await sendMessage(text, agent);
+      const reply = await sendMessage(text, agent, threadId);
+      // For "auto" show what the router decided; otherwise show the chosen agent.
+      const meta = agent === "auto" ? `auto → ${reply.route ?? "?"}` : agent;
+
       if (reply.type === "adaptive_card") {
         const artifact = { id: nextId(), prompt: reply.prompt, card: reply.card };
         setArtifacts((a) => [artifact, ...a]);
-        setMessages((m) => [
-          ...m,
-          { id: nextId(), role: "assistant", agent, text: `📊 ${reply.summary}` },
-        ]);
+        setMessages((m) => [...m, { id: nextId(), role: "assistant", meta, text: `📊 ${reply.summary}` }]);
       } else {
-        setMessages((m) => [
-          ...m,
-          { id: nextId(), role: "assistant", agent, text: reply.text },
-        ]);
+        setMessages((m) => [...m, { id: nextId(), role: "assistant", meta, text: reply.text }]);
       }
     } catch (err) {
       setMessages((m) => [...m, { id: nextId(), role: "error", text: err.message }]);
@@ -55,7 +58,9 @@ export default function App() {
   const placeholder =
     agent === "complex"
       ? "e.g. Show a quarterly revenue dashboard with a channel breakdown"
-      : "Type a message…";
+      : agent === "auto"
+        ? "Ask anything — the router picks text vs card"
+        : "Type a message…";
 
   return (
     <div className="app">

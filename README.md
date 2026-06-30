@@ -8,12 +8,28 @@ A small chat app:
 
 ## Two agents
 
-Both agents call the same model (via **Groq**, which is free and OpenAI-compatible). The only difference is the system prompt and the output constraint:
+The backend is a **LangGraph.js** graph. Both leaf agents call the same model (via **Groq**, free and OpenAI-compatible); the difference is the system prompt and how the answer is read:
 
 | Agent | What it does | How the answer is shaped |
 |-------|--------------|--------------------------|
-| **Simple** | Returns plain text. | System prompt only — `response.content` is used as-is. |
-| **Complex** | Fills the fixed *test data* into a dashboard and returns an **Adaptive Card** JSON with native charts. | **JSON mode** (`response_format: json_object`) forces a `{ summary, card }` object — no fragile text parsing. |
+| **Auto** | A router node picks `text` vs `card` based on your message. | LLM classifier → conditional edge in the graph. |
+| **Simple** | Returns plain text. | System prompt only — model output used as-is. |
+| **Complex** | Fills the fixed *test data* into a dashboard and returns an **Adaptive Card** JSON with native charts/tables. | Asks for `{ summary, card }` JSON; extracted and parsed on the server. |
+
+### The graph (`server/graph.js`)
+
+```
+        ┌────────┐
+START → │ router │   agent="auto" -> LLM classifier; else the dropdown choice
+        └───┬────┘
+   simple   │   complex
+     ┌──────┴──────┐
+  ┌──┴──┐       ┌──┴──┐
+  │text │       │card │ → END
+  └─────┘       └─────┘
+```
+
+`state.messages` is the conversation memory, persisted per `thread_id` by a `MemorySaver` checkpointer (in-memory — resets on server restart). The client sends a stable `threadId` per session, so the agents see earlier turns.
 
 If `GROQ_API_KEY` is not set (or the model is unreachable), the complex agent falls back to a clearly-labelled **static demo card**, and the simple agent returns a demo message — so the UI works end-to-end before you wire up a key.
 
@@ -53,9 +69,10 @@ Then open http://localhost:5173. The Vite dev server proxies `/api` to the Node 
 ```
 server/
   index.js               Express app: /api/agents, /api/chat
+  graph.js               LangGraph: router -> (text | card), with memory
   agents/llm.js          shared Groq (OpenAI-compatible) client
-  agents/simpleAgent.js  plain-text agent
-  agents/complexAgent.js JSON-mode card generation + static fallback card
+  agents/textAgent.js    plain-text agent
+  agents/cardAgent.js    card generation + static fallback card
   agents/testData.js     the fixed test data substituted into prompts
 client/
   src/App.jsx            two-pane layout + chat state
