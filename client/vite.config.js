@@ -6,8 +6,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // Forward API calls to the Node server so there are no CORS surprises.
+      // REST (agents list) and the chat WebSocket both go to the Node server.
       "/api": "http://localhost:3001",
+      "/ws": { target: "ws://localhost:3001", ws: true },
     },
   },
 });

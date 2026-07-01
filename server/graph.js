@@ -24,6 +24,7 @@ const GraphState = Annotation.Root({
   agentChoice: Annotation(), // input: "auto" | "simple" | "complex"
   route: Annotation(), // resolved by the router: "simple" | "complex"
   reply: Annotation(), // output object returned to the client
+  lastCard: Annotation(), // the most recent card JSON, so follow-ups can edit it
 });
 
 // ---- Helpers: LangChain messages <-> OpenAI chat format ----
@@ -48,52 +49,69 @@ function lastUserText(messages) {
 }
 
 // ---- Router: pick the agent ----
-async function classifyRoute(messages) {
+async function classifyRoute(messages, signal) {
   if (!hasKey()) return "simple";
+  // Give the classifier recent context, not just the last line — so feedback on a
+  // card ("there's no data", "add a column") keeps routing to the card branch.
+  // Assistant card turns are stored as "[card] ..." in the history.
+  const recent = messages
+    .slice(-5)
+    .map((m) => `${msgType(m) === "human" ? "User" : "Assistant"}: ${asString(m.content)}`)
+    .join("\n");
   try {
-    const resp = await chat({
-      model: MODEL,
-      max_tokens: 4,
-      messages: [
-        {
-          role: "system",
-          content:
-            "Decide what the user wants. Reply with exactly one word: 'complex' if they want a visual " +
-            "card, table, chart, dashboard, or any rendered UI; otherwise 'simple' for a plain text answer.",
-        },
-        { role: "user", content: lastUserText(messages) },
-      ],
-    });
+    const resp = await chat(
+      {
+        model: MODEL,
+        max_tokens: 4,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You route a chat conversation. Reply with exactly ONE word.\n" +
+              "Reply 'complex' if the latest user message wants a visual card, table, chart, or dashboard — " +
+              "OR is feedback / a change request about a card the assistant just made (assistant card turns " +
+              "look like '[card] ...'), e.g. 'no data', 'add a column', 'make it bigger'.\n" +
+              "Reply 'simple' only for a standalone plain-text question or chit-chat.",
+          },
+          { role: "user", content: recent },
+        ],
+      },
+      { signal },
+    );
     return (resp.choices[0]?.message?.content || "").toLowerCase().includes("complex") ? "complex" : "simple";
-  } catch {
+  } catch (err) {
+    if (signal?.aborted) throw err; // cancelled — let the graph stop
     return "simple";
   }
 }
 
-async function routerNode(state) {
+// Nodes receive (state, config); config.signal is the AbortSignal for cancellation.
+async function routerNode(state, config) {
   const choice = state.agentChoice || "auto";
   if (choice === "simple" || choice === "complex") return { route: choice };
-  return { route: await classifyRoute(state.messages) };
+  return { route: await classifyRoute(state.messages, config?.signal) };
 }
 
 // ---- Leaf nodes ----
-async function textNode(state) {
+async function textNode(state, config) {
   let text;
   try {
-    text = await generateText(toOpenAI(state.messages));
+    text = await generateText(toOpenAI(state.messages), config?.signal);
   } catch (err) {
+    if (config?.signal?.aborted) throw err; // cancelled — propagate
     text = `⚠️ Text agent error: ${String(err?.message ?? err)}`;
   }
   return { messages: [new AIMessage(text)], reply: { type: "text", text } };
 }
 
-async function cardNode(state) {
+async function cardNode(state, config) {
   const latest = lastUserText(state.messages);
-  const { summary, card } = await generateCard(toOpenAI(state.messages), latest);
-  // Store a short text trace in memory (not the whole card JSON).
+  // Pass the previous card so "add a button" edits it instead of regenerating.
+  const { summary, card } = await generateCard(toOpenAI(state.messages), latest, config?.signal, state.lastCard);
   return {
-    messages: [new AIMessage(`[card] ${summary}`)],
+    messages: [new AIMessage(`[card] ${summary}`)], // short trace in chat memory
     reply: { type: "adaptive_card", prompt: latest, summary, card },
+    lastCard: card, // remember the full card for the next edit
   };
 }
 

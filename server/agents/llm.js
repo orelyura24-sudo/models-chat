@@ -11,21 +11,22 @@ function getClient() {
     apiKey: process.env.GROQ_API_KEY,
     baseURL: "https://api.groq.com/openai/v1",
     // Force Node's built-in fetch (undici). The SDK's bundled node-fetch shim
-    // throws "Premature close" against Groq/Cloudflare on Node 24; global fetch
-    // is reliable. (Verified: raw global fetch -> 200, node-fetch shim -> close.)
+    // throws "Premature close" against Groq/Cloudflare on Node 24.
     fetch: (...args) => fetch(...args),
     maxRetries: 0, // we retry ourselves below
     timeout: 60000,
   });
 }
 
-// One chat call with explicit retries for the occasional transient drop.
-export async function chat(params, attempts = 3) {
+// One chat call with explicit retries. `signal` lets a request be cancelled
+// (used by the graph's Stop button) — on abort we throw immediately, no retry.
+export async function chat(params, { signal, attempts = 3 } = {}) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
     try {
-      return await getClient().chat.completions.create(params);
+      return await getClient().chat.completions.create(params, { signal });
     } catch (err) {
+      if (signal?.aborted) throw err; // cancelled — don't retry
       lastErr = err;
       await new Promise((r) => setTimeout(r, 300 * (i + 1)));
     }

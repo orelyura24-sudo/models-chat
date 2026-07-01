@@ -122,6 +122,26 @@ body {
   cursor: pointer;
 }
 .composer button:disabled { opacity: 0.5; cursor: not-allowed; }
+.composer button.stop { background: #dc2626; }
+
+/* connection dot */
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle; margin-left: 6px; }
+.dot.on { background: #16a34a; }
+.dot.off { background: #cbd5e1; }
+
+/* graph node trace */
+.trace { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.trace.live { margin-top: 0; }
+.trace-chip {
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #475569;
+  background: #eef2ff;
+  border: 1px solid #e0e7ff;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.trace.live .trace-chip { background: #ecfdf5; border-color: #d1fae5; color: #047857; }
 
 /* ---- render panel ---- */
 .render-header {

@@ -39,8 +39,8 @@ Real multi-column TABLE (renders natively):
   ]
 }`;
 
-function systemPrompt(data) {
-  return (
+function systemPrompt(data, previousCard) {
+  const base = (
     `You build Microsoft Adaptive Cards (schema http://adaptivecards.io/schemas/adaptive-card.json, version "1.5").\n\n` +
     `Build a card that does EXACTLY what the user asks — no more, no less. Read their wording and match it:\n` +
     `- Asked for a table? Return a table with the columns they named. Asked for a chart? Return that chart.\n` +
@@ -49,7 +49,10 @@ function systemPrompt(data) {
     `visualization (or clearly wants one). If they ask only for a table or only for text, do NOT add any chart.\n\n` +
     `Respond with a single JSON object and NOTHING ELSE, in exactly this shape:\n` +
     `{ "summary": "one short sentence for the chat", "card": { ...the Adaptive Card... } }\n` +
-    `Output the raw JSON object only — no markdown, no code fences, no prose before or after it.\n\n` +
+    `Output the raw JSON object only — no markdown, no code fences, no prose before or after it.\n` +
+    `- "card" MUST be a complete AdaptiveCard: { "type": "AdaptiveCard", "version": "1.5", "body": [ ... ] }. ` +
+    `Never return a bare element (e.g. a Table) as the card — always wrap elements in "body".\n` +
+    `- Any Table MUST have a header row plus at least 3-4 data rows. Never output an empty table.\n\n` +
     `Elements you can use: TextBlock, ColumnSet/Column, FactSet, Container, the Table element, and the ` +
     `optional chart elements. Pick only the ones the request calls for.\n\n` +
     `DATA: a sample dataset is provided below. Use it when the request relates to it (revenue, quarters, ` +
@@ -60,12 +63,22 @@ function systemPrompt(data) {
     "\n" +
     CHART_SCHEMA
   );
+
+  if (!previousCard) return base;
+  return (
+    base +
+    `\n\nREFINEMENT MODE — the user is editing the EXISTING card below. Start from this exact card and apply ` +
+    `ONLY the change they asked for. Copy every other element, text string, and number VERBATIM — ` +
+    `character for character — do not reword, rename, re-randomize, or reorder anything. ` +
+    `(e.g. "add a button" = the identical table plus a new button.) Return the full updated AdaptiveCard.\n` +
+    `CURRENT CARD JSON:\n${JSON.stringify(previousCard)}`
+  );
 }
 
 // Adaptive-card agent. Receives the conversation history (OpenAI message format,
 // already includes the latest user turn) so follow-ups like "add a chart to that"
 // have context. Returns { summary, card }.
-export async function generateCard(history, latestText) {
+export async function generateCard(history, latestText, signal, previousCard) {
   const data = makeTestData();
 
   if (!hasKey()) {
@@ -76,21 +89,50 @@ export async function generateCard(history, latestText) {
   }
 
   try {
-    const resp = await chat({
-      model: MODEL,
-      max_tokens: 8000,
-      messages: [{ role: "system", content: systemPrompt(data) }, ...history],
-    });
+    const resp = await chat(
+      {
+        model: MODEL,
+        max_tokens: 8000,
+        messages: [{ role: "system", content: systemPrompt(data, previousCard) }, ...history],
+      },
+      { signal },
+    );
     const parsed = extractJson(resp.choices[0]?.message?.content ?? "");
-    if (!parsed?.card) throw new Error("Model returned no 'card' field.");
-    return { summary: parsed.summary || "Built an Adaptive Card from your prompt.", card: parsed.card };
+    const card = normalizeCard(parsed?.card);
+    if (!card) throw new Error("Model returned no usable card.");
+    return { summary: parsed.summary || "Built an Adaptive Card from your prompt.", card };
   } catch (err) {
+    if (signal?.aborted) throw err; // cancelled — let the graph stop
     console.error("[cardAgent] falling back:", err?.message ?? err);
     return {
       summary: `Model call failed (${String(err?.message ?? err)}) — showing a static demo card.`,
       card: buildFallbackCard(latestText, data, "Model unavailable — static demo card."),
     };
   }
+}
+
+// Models sometimes return a bare element (e.g. a Table) or an array instead of a
+// full AdaptiveCard. Wrap whatever we get into a valid AdaptiveCard so it renders.
+function wrap(body) {
+  return {
+    type: "AdaptiveCard",
+    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+    version: "1.5",
+    body,
+  };
+}
+
+function normalizeCard(card) {
+  if (!card || typeof card !== "object") return null;
+  if (Array.isArray(card)) return wrap(card);
+  if (card.type === "AdaptiveCard") {
+    card.body = Array.isArray(card.body) ? card.body : [];
+    card.version = card.version || "1.5";
+    card.$schema = card.$schema || "http://adaptivecards.io/schemas/adaptive-card.json";
+    return card;
+  }
+  if (Array.isArray(card.body)) return wrap(card.body); // has a body but missing the type
+  return wrap([card]); // a single bare element like Table
 }
 
 // Pull the JSON object out of a model reply, tolerating code fences / stray prose.

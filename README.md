@@ -31,6 +31,21 @@ START → │ router │   agent="auto" -> LLM classifier; else the dropdown cho
 
 `state.messages` is the conversation memory, persisted per `thread_id` by a `MemorySaver` checkpointer (in-memory — resets on server restart). The client sends a stable `threadId` per session, so the agents see earlier turns.
 
+### Real-time over WebSocket
+
+Chat runs over a **WebSocket** (`/ws`), not REST. The server streams the graph with `graph.stream(..., { streamMode: "updates" })` and pushes one event per node as it finishes, so the UI shows the path light up (`router → text/card`). The same socket carries a **Stop** message: it aborts an `AbortSignal` that is threaded all the way down to the in-flight model call, so cancelling stops both the graph and the LLM request.
+
+| WS message (client → server) | |
+|---|---|
+| `{ type: "chat", message, agent, threadId }` | run the graph |
+| `{ type: "cancel" }` | abort the current run |
+
+| WS event (server → client) | |
+|---|---|
+| `{ type: "start" }` | run began |
+| `{ type: "node", node, route, reply }` | a node finished |
+| `{ type: "done", reply, route }` / `{ type: "cancelled" }` / `{ type: "error" }` | terminal |
+
 If `GROQ_API_KEY` is not set (or the model is unreachable), the complex agent falls back to a clearly-labelled **static demo card**, and the simple agent returns a demo message — so the UI works end-to-end before you wire up a key.
 
 ### Native Adaptive Cards charts
